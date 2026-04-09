@@ -592,94 +592,110 @@ def rooms_update(
     typer.echo(f"{len(all_rooms)} Räume gespeichert in {ROOMLIST_PATH}")
 
 
+def _notify_room(auth_token: str, room_id: str, data: dict) -> tuple[dict, int]:
+    """Sendet eine Adaptive Card an room_id basierend auf dem Payload-Dict."""
+    title = data.get("title", "Notification")
+    text = data.get("text", "")
+    color = CARD_COLOR_MAP.get(data.get("color", "default"), "Default")
+    url = data.get("url")
+    url_label = data.get("url_label", "Details")
+    facts_raw: dict = data.get("facts", {})
+
+    body: list[dict] = [
+        {"type": "TextBlock", "text": title, "weight": "Bolder", "size": "Large", "color": color},
+        {"type": "TextBlock", "text": text, "wrap": True},
+    ]
+    if facts_raw:
+        facts_list = [{"title": k, "value": str(v)} for k, v in facts_raw.items()]
+        body.append({"type": "FactSet", "facts": facts_list})
+    card_content: dict = {
+        "type": "AdaptiveCard",
+        "version": "1.1",
+        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+        "body": body,
+    }
+    if url:
+        card_content["actions"] = [{"type": "Action.OpenUrl", "title": url_label, "url": url}]
+
+    try:
+        httpx.post(
+            f"{WEBEX_API}/messages",
+            headers={"Authorization": f"Bearer {auth_token}", "Content-Type": "application/json"},
+            json={
+                "roomId": room_id,
+                "text": title,
+                "attachments": [
+                    {
+                        "contentType": "application/vnd.microsoft.card.adaptive",
+                        "content": card_content,
+                    }
+                ],
+            },
+            timeout=10,
+        ).raise_for_status()
+    except (httpx.HTTPStatusError, httpx.RequestError) as e:
+        return {"error": str(e)}, 500
+    return {"ok": True}, 200
+
+
 @app.command(name="serve")
 def serve(
-    room: Optional[str] = typer.Argument(None, help="Ziel-Raumname (Teilstring) oder Room-ID"),
+    room: Optional[str] = typer.Argument(None, help="Standard-Raum (Teilstring) oder Room-ID)"),
     port: int = typer.Option(9000, "--port", "-p", help="Port des Webhook-Servers"),
     host: str = typer.Option("0.0.0.0", "--host", help="Bind-Adresse"),
     token: Optional[str] = typer.Option(None, "--token", help="Webex-Token (überschreibt alles)"),
 ) -> None:
-    """Webhook-Bridge starten: empfängt POST /notify und leitet nach Webex weiter.
+    """Webhook-Bridge für mehrere Räume starten.
 
-    Erwartet JSON: {"title": "...", "text": "...", "color": "good|warning|attention"}
-    Felder 'title' und 'text' sind Pflicht, der Rest optional.
+    POST /notify/<raum>  — Nachricht an beliebigen Raum (Teilstring oder Room-ID)
+    POST /notify         — Nachricht an Standard-Raum (Argument oder config default_room)
+
+    Payload: {"title": "...", "text": "...", "color": "good|warning|attention",
+              "facts": {"Key": "Value"}, "url": "...", "url_label": "..."}
     """
     from flask import Flask, Response
     from flask import request as flask_request
 
     auth_token = _get_token(token)
-    room_id = _get_room(room)
+    default_room_id = _get_room(room) if room else _load_config().get("default_room")
 
     flask_app = Flask(__name__)
 
+    @flask_app.post("/notify/<room_name>")
+    def notify_room(room_name: str) -> Response:
+        try:
+            rid = _resolve_room(room_name)
+        except SystemExit:
+            return Response(
+                json.dumps({"error": f"Raum '{room_name}' nicht gefunden"}),
+                status=404,
+                mimetype="application/json",
+            )
+        data = flask_request.get_json(silent=True) or {}
+        result, status = _notify_room(auth_token, rid, data)
+        return Response(json.dumps(result), status=status, mimetype="application/json")
+
     @flask_app.post("/notify")
     def notify() -> Response:
-        data = flask_request.get_json(silent=True) or {}
-        title = data.get("title", "Notification")
-        text = data.get("text", "")
-        color = CARD_COLOR_MAP.get(data.get("color", "default"), "Default")
-        url = data.get("url")
-        url_label = data.get("url_label", "Details")
-        facts_raw: dict = data.get("facts", {})
-
-        body: list[dict] = [
-            {
-                "type": "TextBlock",
-                "text": title,
-                "weight": "Bolder",
-                "size": "Large",
-                "color": color,
-            },
-            {"type": "TextBlock", "text": text, "wrap": True},
-        ]
-
-        if facts_raw:
-            body.append(
-                {
-                    "type": "FactSet",
-                    "facts": [{"title": k, "value": str(v)} for k, v in facts_raw.items()],
-                }
+        if not default_room_id:
+            return Response(
+                json.dumps({"error": "Kein Standard-Raum. POST /notify/<raum> nutzen."}),
+                status=400,
+                mimetype="application/json",
             )
-
-        card_content: dict = {
-            "type": "AdaptiveCard",
-            "version": "1.1",
-            "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
-            "body": body,
-        }
-        if url:
-            card_content["actions"] = [{"type": "Action.OpenUrl", "title": url_label, "url": url}]
-
-        try:
-            httpx.post(
-                f"{WEBEX_API}/messages",
-                headers={
-                    "Authorization": f"Bearer {auth_token}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "roomId": room_id,
-                    "text": title,
-                    "attachments": [
-                        {
-                            "contentType": "application/vnd.microsoft.card.adaptive",
-                            "content": card_content,
-                        }
-                    ],
-                },
-                timeout=10,
-            ).raise_for_status()
-        except (httpx.HTTPStatusError, httpx.RequestError) as e:
-            return Response(json.dumps({"error": str(e)}), status=500, mimetype="application/json")
-
-        return Response(json.dumps({"ok": True}), status=200, mimetype="application/json")
+        rid = _resolve_room(default_room_id)
+        data = flask_request.get_json(silent=True) or {}
+        result, status = _notify_room(auth_token, rid, data)
+        return Response(json.dumps(result), status=status, mimetype="application/json")
 
     @flask_app.get("/health")
     def health() -> Response:
         return Response(json.dumps({"ok": True}), mimetype="application/json")
 
-    typer.echo(f"Webhook-Bridge läuft auf http://{host}:{port}/notify")
-    typer.echo(f"Zielraum: {room_id}")
+    typer.echo(f"Webhook-Bridge läuft auf http://{host}:{port}")
+    typer.echo("  POST /notify/<raum>  — beliebiger Raum")
+    if default_room_id:
+        typer.echo(f"  POST /notify         — Standard: {default_room_id}")
     flask_app.run(host=host, port=port)
 
 
@@ -694,9 +710,9 @@ def apprise_url(
     Webex hat Incoming Webhooks abgeschafft. Stattdessen serve-Bridge starten:
       webex serve <raum> --port 9000
     """
-    _resolve_room(room)  # Raum validieren, Warnung ausgeben falls unbekannt
-    typer.echo(f"json://{host}:{port}/notify")
-    typer.echo(f"\nBridge starten mit: webex serve {room} --port {port}", err=True)
+    room_id = _resolve_room(room)
+    typer.echo(f"json://{host}:{port}/notify/{room_id}")
+    typer.echo(f"\nBridge starten mit: webex serve --port {port}", err=True)
 
 
 @app.command()
