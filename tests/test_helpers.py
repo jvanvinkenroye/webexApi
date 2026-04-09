@@ -5,10 +5,13 @@ import pytest
 import send_message
 
 
-@pytest.mark.parametrize("markdown,expected_key", [
-    (False, "text"),
-    (True, "markdown"),
-])
+@pytest.mark.parametrize(
+    "markdown,expected_key",
+    [
+        (False, "text"),
+        (True, "markdown"),
+    ],
+)
 def test_build_message_fields_key(markdown: bool, expected_key: str) -> None:
     result = send_message._build_message_fields({"roomId": "r1"}, "Hallo", markdown)
     assert expected_key in result

@@ -39,6 +39,7 @@ CARD_COLOR_MAP = {
 # Token-Speicherung
 # ---------------------------------------------------------------------------
 
+
 def _load_tokens() -> dict | None:
     if TOKENS_PATH.exists():
         return json.loads(TOKENS_PATH.read_text())
@@ -97,6 +98,7 @@ def _get_valid_oauth_token() -> str | None:
 # Räume
 # ---------------------------------------------------------------------------
 
+
 def _load_rooms() -> list[dict]:
     if not ROOMLIST_PATH.exists():
         return []
@@ -133,6 +135,7 @@ def _resolve_room(room_arg: str) -> str:
 # Token-Auflösung
 # ---------------------------------------------------------------------------
 
+
 def _get_token(token: Optional[str]) -> str:
     if token:
         return token
@@ -158,6 +161,7 @@ def _get_token(token: Optional[str]) -> str:
 # ---------------------------------------------------------------------------
 # HTTP senden
 # ---------------------------------------------------------------------------
+
 
 def _send_payload(auth_token: str, payload: dict) -> str:
     try:
@@ -219,6 +223,7 @@ def _send_multipart(auth_token: str, fields: dict, file_path: Path) -> str:
 # ---------------------------------------------------------------------------
 # OAuth Login
 # ---------------------------------------------------------------------------
+
 
 @app.command()
 def login() -> None:
@@ -336,6 +341,7 @@ def logout() -> None:
 # Befehle
 # ---------------------------------------------------------------------------
 
+
 @app.command()
 def send(
     room: str = typer.Argument(..., help="Raumname (Teilstring) oder Room-ID"),
@@ -438,16 +444,19 @@ def card(
     if actions:
         card_content["actions"] = actions
 
-    _send_payload(auth_token, {
-        "roomId": room_id,
-        "text": title,
-        "attachments": [
-            {
-                "contentType": "application/vnd.microsoft.card.adaptive",
-                "content": card_content,
-            }
-        ],
-    })
+    _send_payload(
+        auth_token,
+        {
+            "roomId": room_id,
+            "text": title,
+            "attachments": [
+                {
+                    "contentType": "application/vnd.microsoft.card.adaptive",
+                    "content": card_content,
+                }
+            ],
+        },
+    )
 
 
 @app.command(name="read")
@@ -563,16 +572,23 @@ def serve(
         facts_raw: dict = data.get("facts", {})
 
         body: list[dict] = [
-            {"type": "TextBlock", "text": title, "weight": "Bolder", "size": "Large",
-             "color": color},
+            {
+                "type": "TextBlock",
+                "text": title,
+                "weight": "Bolder",
+                "size": "Large",
+                "color": color,
+            },
             {"type": "TextBlock", "text": text, "wrap": True},
         ]
 
         if facts_raw:
-            body.append({
-                "type": "FactSet",
-                "facts": [{"title": k, "value": str(v)} for k, v in facts_raw.items()],
-            })
+            body.append(
+                {
+                    "type": "FactSet",
+                    "facts": [{"title": k, "value": str(v)} for k, v in facts_raw.items()],
+                }
+            )
 
         card_content: dict = {
             "type": "AdaptiveCard",
@@ -593,10 +609,12 @@ def serve(
                 json={
                     "roomId": room_id,
                     "text": title,
-                    "attachments": [{
-                        "contentType": "application/vnd.microsoft.card.adaptive",
-                        "content": card_content,
-                    }],
+                    "attachments": [
+                        {
+                            "contentType": "application/vnd.microsoft.card.adaptive",
+                            "content": card_content,
+                        }
+                    ],
                 },
                 timeout=10,
             ).raise_for_status()
@@ -617,7 +635,9 @@ def serve(
 @app.command(name="apprise-url")
 def apprise_url(
     room: str = typer.Argument(..., help="Raumname (Teilstring) oder Room-ID"),
-    token: Optional[str] = typer.Option(None, "--token", help="Bot-Token (überschreibt WEBEX_TOKEN)"),  # noqa: E501
+    token: Optional[str] = typer.Option(
+        None, "--token", help="Bot-Token (überschreibt WEBEX_TOKEN)"
+    ),  # noqa: E501
 ) -> None:
     """Apprise-URL für einen Raum ausgeben (wxteams://<token>/<room-id>/)."""
     bot_token = token or os.environ.get("WEBEX_TOKEN")

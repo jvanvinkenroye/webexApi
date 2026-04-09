@@ -45,6 +45,7 @@ def _mock_post(msg_id: str = "msg-123") -> MagicMock:
 # list
 # ---------------------------------------------------------------------------
 
+
 def test_list_shows_rooms() -> None:
     result = runner.invoke(app, ["list"])
     assert result.exit_code == 0
@@ -67,6 +68,7 @@ def test_list_search_no_match() -> None:
 # ---------------------------------------------------------------------------
 # send
 # ---------------------------------------------------------------------------
+
 
 def test_send_text(valid_token) -> None:
     with patch("send_message.httpx.post", return_value=_mock_post()) as mock_post:
@@ -113,6 +115,7 @@ def test_send_no_token(monkeypatch: pytest.MonkeyPatch) -> None:
 # dm
 # ---------------------------------------------------------------------------
 
+
 def test_dm_sends_to_email(valid_token) -> None:
     with patch("send_message.httpx.post", return_value=_mock_post()) as mock_post:
         result = runner.invoke(app, ["dm", "user@example.com", "Hallo"])
@@ -126,13 +129,20 @@ def test_dm_sends_to_email(valid_token) -> None:
 # card
 # ---------------------------------------------------------------------------
 
+
 def test_card_basic(valid_token) -> None:
     with patch("send_message.httpx.post", return_value=_mock_post()) as mock_post:
-        result = runner.invoke(app, [
-            "card", "alpha",
-            "--title", "Alert",
-            "--text", "Server down",
-        ])
+        result = runner.invoke(
+            app,
+            [
+                "card",
+                "alpha",
+                "--title",
+                "Alert",
+                "--text",
+                "Server down",
+            ],
+        )
     assert result.exit_code == 0
     payload = mock_post.call_args.kwargs["json"]
     card = payload["attachments"][0]["content"]
@@ -142,12 +152,19 @@ def test_card_basic(valid_token) -> None:
 
 def test_card_color_attention(valid_token) -> None:
     with patch("send_message.httpx.post", return_value=_mock_post()) as mock_post:
-        result = runner.invoke(app, [
-            "card", "alpha",
-            "--title", "Fehler",
-            "--text", "Kritisch",
-            "--color", "attention",
-        ])
+        result = runner.invoke(
+            app,
+            [
+                "card",
+                "alpha",
+                "--title",
+                "Fehler",
+                "--text",
+                "Kritisch",
+                "--color",
+                "attention",
+            ],
+        )
     assert result.exit_code == 0
     card = mock_post.call_args.kwargs["json"]["attachments"][0]["content"]
     assert card["body"][0]["color"] == "Attention"
@@ -155,12 +172,21 @@ def test_card_color_attention(valid_token) -> None:
 
 def test_card_with_facts(valid_token) -> None:
     with patch("send_message.httpx.post", return_value=_mock_post()) as mock_post:
-        result = runner.invoke(app, [
-            "card", "alpha",
-            "--title", "T", "--text", "M",
-            "--fact", "Host=server1",
-            "--fact", "Status=down",
-        ])
+        result = runner.invoke(
+            app,
+            [
+                "card",
+                "alpha",
+                "--title",
+                "T",
+                "--text",
+                "M",
+                "--fact",
+                "Host=server1",
+                "--fact",
+                "Status=down",
+            ],
+        )
     assert result.exit_code == 0
     card = mock_post.call_args.kwargs["json"]["attachments"][0]["content"]
     fact_set = next(b for b in card["body"] if b["type"] == "FactSet")
@@ -169,12 +195,21 @@ def test_card_with_facts(valid_token) -> None:
 
 def test_card_with_url(valid_token) -> None:
     with patch("send_message.httpx.post", return_value=_mock_post()) as mock_post:
-        result = runner.invoke(app, [
-            "card", "alpha",
-            "--title", "T", "--text", "M",
-            "--url", "https://example.com",
-            "--url-label", "Details",
-        ])
+        result = runner.invoke(
+            app,
+            [
+                "card",
+                "alpha",
+                "--title",
+                "T",
+                "--text",
+                "M",
+                "--url",
+                "https://example.com",
+                "--url-label",
+                "Details",
+            ],
+        )
     assert result.exit_code == 0
     card = mock_post.call_args.kwargs["json"]["attachments"][0]["content"]
     assert card["actions"][0]["url"] == "https://example.com"
@@ -183,6 +218,7 @@ def test_card_with_url(valid_token) -> None:
 # ---------------------------------------------------------------------------
 # apprise-url
 # ---------------------------------------------------------------------------
+
 
 def test_apprise_url_output(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("WEBEX_TOKEN", "my-bot-token")

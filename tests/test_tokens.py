@@ -12,6 +12,7 @@ import send_message
 # _load_tokens / _save_tokens
 # ---------------------------------------------------------------------------
 
+
 def test_load_tokens_missing(tmp_path: Path) -> None:
     with patch.object(send_message, "TOKENS_PATH", tmp_path / "none.json"):
         assert send_message._load_tokens() is None
@@ -38,6 +39,7 @@ def test_save_tokens_sets_permissions(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # _get_valid_oauth_token
 # ---------------------------------------------------------------------------
+
 
 def test_oauth_token_no_file(tmp_path: Path) -> None:
     with patch.object(send_message, "TOKENS_PATH", tmp_path / "none.json"):
@@ -102,6 +104,7 @@ def test_oauth_token_expired_refresh_fails(tmp_path: Path, capsys) -> None:
 # _get_token
 # ---------------------------------------------------------------------------
 
+
 def test_get_token_explicit_arg(tmp_path: Path) -> None:
     with patch.object(send_message, "TOKENS_PATH", tmp_path / "none.json"):
         assert send_message._get_token("direct-token") == "direct-token"
@@ -124,6 +127,7 @@ def test_get_token_from_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
 
 def test_get_token_none_exits(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import click
+
     monkeypatch.delenv("WEBEX_TOKEN", raising=False)
     with patch.object(send_message, "TOKENS_PATH", tmp_path / "none.json"):
         with pytest.raises((SystemExit, click.exceptions.Exit)):

@@ -11,6 +11,7 @@ import send_message
 # _load_rooms
 # ---------------------------------------------------------------------------
 
+
 def test_load_rooms_missing_file(tmp_path: Path) -> None:
     with patch.object(send_message, "ROOMLIST_PATH", tmp_path / "nonexistent.json"):
         assert send_message._load_rooms() == []
@@ -26,6 +27,7 @@ def test_load_rooms_returns_items(roomlist_file: Path) -> None:
 # ---------------------------------------------------------------------------
 # _resolve_room
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(autouse=True)
 def patch_roomlist(roomlist_file: Path):
@@ -52,6 +54,7 @@ def test_resolve_partial_title_uppercase() -> None:
 def test_resolve_multiple_matches_exits(capsys) -> None:
     # "a" kommt in "Alpha Testroom" und "Gamma Support" vor → mehrere Treffer
     import click
+
     with pytest.raises((SystemExit, click.exceptions.Exit)):
         send_message._resolve_room("a")
 
@@ -63,10 +66,13 @@ def test_resolve_unknown_returns_raw_with_warning(capsys) -> None:
     assert "Warnung" in captured.err
 
 
-@pytest.mark.parametrize("room_arg,expected_id", [
-    ("alpha", "room-id-alpha"),
-    ("support", "room-id-gamma"),
-    ("room-id-beta", "room-id-beta"),
-])
+@pytest.mark.parametrize(
+    "room_arg,expected_id",
+    [
+        ("alpha", "room-id-alpha"),
+        ("support", "room-id-gamma"),
+        ("room-id-beta", "room-id-beta"),
+    ],
+)
 def test_resolve_parametrized(room_arg: str, expected_id: str) -> None:
     assert send_message._resolve_room(room_arg) == expected_id

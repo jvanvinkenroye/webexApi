@@ -35,6 +35,7 @@ def roomlist_file(tmp_path: Path) -> Path:
 @pytest.fixture
 def mock_response():
     """Erstellt eine httpx-ähnliche Mock-Response."""
+
     class MockResponse:
         def __init__(self, data: dict, status_code: int = 200):
             self._data = data
@@ -47,6 +48,7 @@ def mock_response():
         def raise_for_status(self) -> None:
             if self.status_code >= 400:
                 import httpx
+
                 raise httpx.HTTPStatusError(
                     self.text,
                     request=None,  # type: ignore[arg-type]
