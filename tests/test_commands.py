@@ -15,10 +15,11 @@ runner = CliRunner()
 
 @pytest.fixture(autouse=True)
 def patch_paths(tmp_path: Path, roomlist_file: Path):
-    """Alle Tests bekommen tmp-Pfade für roomlist und tokens."""
+    """Alle Tests bekommen tmp-Pfade für roomlist, tokens und config."""
     with (
         patch.object(send_message, "ROOMLIST_PATH", roomlist_file),
         patch.object(send_message, "TOKENS_PATH", tmp_path / "tokens.json"),
+        patch.object(send_message, "CONFIG_PATH", tmp_path / "config.json"),
     ):
         yield
 

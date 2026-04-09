@@ -29,6 +29,7 @@ _CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
 ROOMLIST_PATH = _CONFIG_DIR / "roomlist.json"
 TOKENS_PATH = _CONFIG_DIR / ".webex_tokens.json"
+CONFIG_PATH = _CONFIG_DIR / "config.json"
 
 CARD_COLOR_MAP = {
     "default": "Default",
@@ -36,6 +37,22 @@ CARD_COLOR_MAP = {
     "warning": "Warning",
     "attention": "Attention",
 }
+
+
+# ---------------------------------------------------------------------------
+# Konfiguration
+# ---------------------------------------------------------------------------
+
+
+def _load_config() -> dict:
+    if CONFIG_PATH.exists():
+        return json.loads(CONFIG_PATH.read_text())
+    return {}
+
+
+def _save_config(data: dict) -> None:
+    CONFIG_PATH.write_text(json.dumps(data, indent=2))
+    CONFIG_PATH.chmod(0o600)
 
 
 # ---------------------------------------------------------------------------
@@ -55,8 +72,9 @@ def _save_tokens(data: dict) -> None:
 
 
 def _refresh_access_token(tokens: dict) -> dict:
-    client_id = os.environ.get("WEBEX_CLIENT_ID", "")
-    client_secret = os.environ.get("WEBEX_CLIENT_SECRET", "")
+    _cfg = _load_config()
+    client_id = os.environ.get("WEBEX_CLIENT_ID") or _cfg.get("oauth_client_id", "")
+    client_secret = os.environ.get("WEBEX_CLIENT_SECRET") or _cfg.get("oauth_client_secret", "")
     if not client_id or not client_secret:
         raise RuntimeError("WEBEX_CLIENT_ID / WEBEX_CLIENT_SECRET nicht gesetzt.")
 
@@ -134,6 +152,18 @@ def _resolve_room(room_arg: str) -> str:
     return room_arg
 
 
+def _get_room(room: Optional[str]) -> str:
+    """Raum-ID auflösen: explizites Argument oder Standard-Raum aus Config."""
+    if room:
+        return _resolve_room(room)
+    cfg = _load_config()
+    default = cfg.get("default_room")
+    if default:
+        return _resolve_room(default)
+    typer.echo("Kein Raum angegeben und kein Standard-Raum konfiguriert.", err=True)
+    raise typer.Exit(1)
+
+
 # ---------------------------------------------------------------------------
 # Token-Auflösung
 # ---------------------------------------------------------------------------
@@ -146,6 +176,10 @@ def _get_token(token: Optional[str]) -> str:
     oauth = _get_valid_oauth_token()
     if oauth:
         return oauth
+
+    config_token = _load_config().get("bot_token")
+    if config_token:
+        return config_token
 
     env_token = os.environ.get("WEBEX_TOKEN")
     if env_token:
@@ -231,8 +265,9 @@ def _send_multipart(auth_token: str, fields: dict, file_path: Path) -> str:
 @app.command()
 def login() -> None:
     """OAuth-Login: Browser öffnen, Token speichern. Einmalig nötig."""
-    client_id = os.environ.get("WEBEX_CLIENT_ID")
-    client_secret = os.environ.get("WEBEX_CLIENT_SECRET")
+    _cfg = _load_config()
+    client_id = os.environ.get("WEBEX_CLIENT_ID") or _cfg.get("oauth_client_id")
+    client_secret = os.environ.get("WEBEX_CLIENT_SECRET") or _cfg.get("oauth_client_secret")
 
     if not client_id or not client_secret:
         typer.echo(
@@ -347,7 +382,7 @@ def logout() -> None:
 
 @app.command()
 def send(
-    room: str = typer.Argument(..., help="Raumname (Teilstring) oder Room-ID"),
+    room: Optional[str] = typer.Argument(None, help="Raumname (Teilstring) oder Room-ID"),
     text: str = typer.Argument(..., help="Zu sendende Nachricht"),
     markdown: bool = typer.Option(False, "--markdown/--no-markdown", help="Als Markdown senden"),
     file: Optional[Path] = typer.Option(None, "--file", "-f", help="Dateianhang (lokal)"),
@@ -355,7 +390,7 @@ def send(
 ) -> None:
     """Nachricht an einen Webex-Raum senden, optional mit Dateianhang."""
     auth_token = _get_token(token)
-    room_id = _resolve_room(room)
+    room_id = _get_room(room)
 
     fields = _build_message_fields({"roomId": room_id}, text, markdown)
     if file:
@@ -397,7 +432,7 @@ class CardColor(str, Enum):
 
 @app.command()
 def card(
-    room: str = typer.Argument(..., help="Raumname (Teilstring) oder Room-ID"),
+    room: Optional[str] = typer.Argument(None, help="Raumname (Teilstring) oder Room-ID"),
     title: str = typer.Option(..., "--title", "-t", help="Titel der Karte"),
     text: str = typer.Option(..., "--text", "-m", help="Nachrichtentext"),
     color: CardColor = typer.Option(CardColor.default, "--color", "-c", help="Farbe"),
@@ -408,7 +443,7 @@ def card(
 ) -> None:
     """Adaptive Card mit Titel, Text, optionalen Facts und Button senden."""
     auth_token = _get_token(token)
-    room_id = _resolve_room(room)
+    room_id = _get_room(room)
 
     body: list[dict] = [
         {
@@ -464,13 +499,13 @@ def card(
 
 @app.command(name="read")
 def read_messages(
-    room: str = typer.Argument(..., help="Raumname (Teilstring) oder Room-ID"),
+    room: Optional[str] = typer.Argument(None, help="Raumname (Teilstring) oder Room-ID"),
     count: int = typer.Option(10, "--count", "-n", help="Anzahl Nachrichten"),
     token: Optional[str] = typer.Option(None, "--token", help="Webex-Token (überschreibt alles)"),
 ) -> None:
     """Letzte Nachrichten aus einem Raum anzeigen."""
     auth_token = _get_token(token)
-    room_id = _resolve_room(room)
+    room_id = _get_room(room)
 
     try:
         response = httpx.get(
@@ -546,7 +581,7 @@ def rooms_update(
 
 @app.command(name="serve")
 def serve(
-    room: str = typer.Argument(..., help="Ziel-Raumname (Teilstring) oder Room-ID"),
+    room: Optional[str] = typer.Argument(None, help="Ziel-Raumname (Teilstring) oder Room-ID"),
     port: int = typer.Option(9000, "--port", "-p", help="Port des Webhook-Servers"),
     host: str = typer.Option("0.0.0.0", "--host", help="Bind-Adresse"),
     token: Optional[str] = typer.Option(None, "--token", help="Webex-Token (überschreibt alles)"),
@@ -560,7 +595,7 @@ def serve(
     from flask import request as flask_request
 
     auth_token = _get_token(token)
-    room_id = _resolve_room(room)
+    room_id = _get_room(room)
 
     flask_app = Flask(__name__)
 
@@ -650,6 +685,53 @@ def apprise_url(
 
     room_id = _resolve_room(room)
     typer.echo(f"wxteams://{bot_token}/{room_id}/")
+
+
+@app.command()
+def setup() -> None:
+    """Interaktiver Konfigurationsdialog (Bot-Token, Standard-Raum, OAuth)."""
+    cfg = _load_config()
+
+    # --- Bot-Token ---
+    existing = cfg.get("bot_token", "")
+    if len(existing) >= 4:
+        hint = f"****{existing[-4:]}"
+    else:
+        hint = "gesetzt" if existing else "nicht gesetzt"
+    new_token = typer.prompt(f"Bot-Token (aktuell: {hint})", default="", hide_input=True)
+    if new_token.strip():
+        cfg["bot_token"] = new_token.strip()
+
+    # --- Standard-Raum ---
+    rooms = _load_rooms()
+    current_default = cfg.get("default_room", "")
+    typer.echo(f"\nStandard-Raum (aktuell: {current_default or 'keiner'})")
+    if rooms:
+        for i, room in enumerate(rooms, 1):
+            typer.echo(f"  {i:2d}. {room['title']}")
+    selection = typer.prompt("  Nummer oder Raumname (Enter = beibehalten)", default="")
+    if selection.strip():
+        if selection.strip().isdigit():
+            idx = int(selection.strip()) - 1
+            if 0 <= idx < len(rooms):
+                cfg["default_room"] = rooms[idx]["title"]
+            else:
+                typer.echo("Ungültige Nummer.", err=True)
+                raise typer.Exit(1)
+        else:
+            cfg["default_room"] = selection.strip()
+
+    # --- OAuth-Credentials ---
+    if typer.confirm("\nOAuth-Credentials einrichten?", default=False):
+        client_id = typer.prompt("  WEBEX_CLIENT_ID", default="", hide_input=True)
+        client_secret = typer.prompt("  WEBEX_CLIENT_SECRET", default="", hide_input=True)
+        if client_id.strip():
+            cfg["oauth_client_id"] = client_id.strip()
+        if client_secret.strip():
+            cfg["oauth_client_secret"] = client_secret.strip()
+
+    _save_config(cfg)
+    typer.echo(f"\nConfig gespeichert in {CONFIG_PATH}")
 
 
 @app.command(name="list")
