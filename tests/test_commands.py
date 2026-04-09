@@ -216,6 +216,77 @@ def test_card_with_url(valid_token) -> None:
     assert card["actions"][0]["url"] == "https://example.com"
 
 
+def test_card_multiple_urls(valid_token) -> None:
+    with patch("send_message.httpx.post", return_value=_mock_post()) as mock_post:
+        result = runner.invoke(
+            app,
+            [
+                "card", "alpha",
+                "--title", "T", "--text", "M",
+                "--url", "https://a.com", "--url-label", "Link A",
+                "--url", "https://b.com", "--url-label", "Link B",
+            ],
+        )
+    assert result.exit_code == 0
+    actions = mock_post.call_args.kwargs["json"]["attachments"][0]["content"]["actions"]
+    assert len(actions) == 2
+    assert actions[0] == {"type": "Action.OpenUrl", "title": "Link A", "url": "https://a.com"}
+    assert actions[1] == {"type": "Action.OpenUrl", "title": "Link B", "url": "https://b.com"}
+
+
+def test_card_url_default_label(valid_token) -> None:
+    with patch("send_message.httpx.post", return_value=_mock_post()) as mock_post:
+        result = runner.invoke(
+            app,
+            ["card", "alpha", "--title", "T", "--text", "M", "--url", "https://x.com"],
+        )
+    assert result.exit_code == 0
+    actions = mock_post.call_args.kwargs["json"]["attachments"][0]["content"]["actions"]
+    assert actions[0]["title"] == "Details"
+
+
+def test_card_with_subtitle(valid_token) -> None:
+    with patch("send_message.httpx.post", return_value=_mock_post()) as mock_post:
+        result = runner.invoke(
+            app,
+            ["card", "alpha", "--title", "T", "--subtitle", "Untertitel", "--text", "M"],
+        )
+    assert result.exit_code == 0
+    body = mock_post.call_args.kwargs["json"]["attachments"][0]["content"]["body"]
+    texts = [b["text"] for b in body if b["type"] == "TextBlock"]
+    assert "Untertitel" in texts
+
+
+def test_card_with_image(valid_token) -> None:
+    with patch("send_message.httpx.post", return_value=_mock_post()) as mock_post:
+        result = runner.invoke(
+            app,
+            [
+                "card", "alpha",
+                "--title", "T", "--text", "M",
+                "--image", "https://example.com/img.png",
+            ],
+        )
+    assert result.exit_code == 0
+    body = mock_post.call_args.kwargs["json"]["attachments"][0]["content"]["body"]
+    images = [b for b in body if b["type"] == "Image"]
+    assert len(images) == 1
+    assert images[0]["url"] == "https://example.com/img.png"
+
+
+def test_card_with_separator(valid_token) -> None:
+    with patch("send_message.httpx.post", return_value=_mock_post()) as mock_post:
+        result = runner.invoke(
+            app,
+            ["card", "alpha", "--title", "T", "--text", "M", "--separator"],
+        )
+    assert result.exit_code == 0
+    body = mock_post.call_args.kwargs["json"]["attachments"][0]["content"]["body"]
+    # TextBlock für den Text soll separator=True haben
+    text_block = next(b for b in body if b.get("text") == "M")
+    assert text_block.get("separator") is True
+
+
 # ---------------------------------------------------------------------------
 # apprise-url
 # ---------------------------------------------------------------------------

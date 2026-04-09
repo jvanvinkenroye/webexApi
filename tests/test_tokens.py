@@ -121,7 +121,10 @@ def test_get_token_from_oauth(tmp_path: Path) -> None:
 
 def test_get_token_from_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("WEBEX_TOKEN", "env-bot-token")
-    with patch.object(send_message, "TOKENS_PATH", tmp_path / "none.json"):
+    with (
+        patch.object(send_message, "TOKENS_PATH", tmp_path / "none.json"),
+        patch.object(send_message, "CONFIG_PATH", tmp_path / "none_config.json"),
+    ):
         assert send_message._get_token(None) == "env-bot-token"
 
 
@@ -129,6 +132,9 @@ def test_get_token_none_exits(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     import click
 
     monkeypatch.delenv("WEBEX_TOKEN", raising=False)
-    with patch.object(send_message, "TOKENS_PATH", tmp_path / "none.json"):
+    with (
+        patch.object(send_message, "TOKENS_PATH", tmp_path / "none.json"),
+        patch.object(send_message, "CONFIG_PATH", tmp_path / "none_config.json"),
+    ):
         with pytest.raises((SystemExit, click.exceptions.Exit)):
             send_message._get_token(None)

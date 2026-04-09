@@ -434,14 +434,17 @@ class CardColor(str, Enum):
 def card(
     room: Optional[str] = typer.Argument(None, help="Raumname (Teilstring) oder Room-ID"),
     title: str = typer.Option(..., "--title", "-t", help="Titel der Karte"),
+    subtitle: Optional[str] = typer.Option(None, "--subtitle", help="Untertitel"),
     text: str = typer.Option(..., "--text", "-m", help="Nachrichtentext"),
-    color: CardColor = typer.Option(CardColor.default, "--color", "-c", help="Farbe"),
-    url: Optional[str] = typer.Option(None, "--url", "-u", help="URL für einen Button"),
-    url_label: str = typer.Option("Details", "--url-label", help="Button-Beschriftung"),
+    color: CardColor = typer.Option(CardColor.default, "--color", "-c", help="Farbe des Titels"),
+    separator: bool = typer.Option(False, "--separator/--no-separator", help="Trennlinie vor Text"),
+    urls: Optional[list[str]] = typer.Option(None, "--url", "-u", help="Button-URL (wiederholbar)"),
+    url_labels: Optional[list[str]] = typer.Option(None, "--url-label", help="Button-Label (wiederholbar)"),  # noqa: E501
+    images: Optional[list[str]] = typer.Option(None, "--image", help="Bild-URL (wiederholbar)"),
     facts: Optional[list[str]] = typer.Option(None, "--fact", help="Key=Value (wiederholbar)"),
     token: Optional[str] = typer.Option(None, "--token", help="Token (überschreibt alles)"),
 ) -> None:
-    """Adaptive Card mit Titel, Text, optionalen Facts und Button senden."""
+    """Adaptive Card mit Titel, Text, optionalen Facts, Bildern und Buttons senden."""
     auth_token = _get_token(token)
     room_id = _get_room(room)
 
@@ -453,12 +456,19 @@ def card(
             "size": "Large",
             "color": CARD_COLOR_MAP[color.value],
         },
-        {
-            "type": "TextBlock",
-            "text": text,
-            "wrap": True,
-        },
     ]
+
+    if subtitle:
+        body.append({"type": "TextBlock", "text": subtitle, "isSubtle": True, "wrap": True})
+
+    text_block: dict = {"type": "TextBlock", "text": text, "wrap": True}
+    if separator:
+        text_block["separator"] = True
+    body.append(text_block)
+
+    if images:
+        for image_url in images:
+            body.append({"type": "Image", "url": image_url, "size": "Large"})
 
     if facts:
         parsed = []
@@ -470,8 +480,11 @@ def card(
             body.append({"type": "FactSet", "facts": parsed})
 
     actions: list[dict] = []
-    if url:
-        actions.append({"type": "Action.OpenUrl", "title": url_label, "url": url})
+    if urls:
+        labels = list(url_labels or [])
+        for i, u in enumerate(urls):
+            label = labels[i] if i < len(labels) else "Details"
+            actions.append({"type": "Action.OpenUrl", "title": label, "url": u})
 
     card_content: dict = {
         "type": "AdaptiveCard",
