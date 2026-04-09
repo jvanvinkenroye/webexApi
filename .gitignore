@@ -1,0 +1,18 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Secrets und lokale Tokens
+.webex_tokens.json
+us-tik-nfl-notibot.txt
+sandbox.txt
+
+# Claude intern
+.claude/
