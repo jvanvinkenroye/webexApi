@@ -9,6 +9,7 @@ set -euo pipefail
 readonly SERVICE_NAME="webex-bridge"
 readonly SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 readonly DEFAULT_PORT=9000
+readonly DEFAULT_VENV="/opt/webexapi"
 
 # ---------------------------------------------------------------------------
 # Hilfsfunktionen
@@ -21,16 +22,19 @@ Usage: $(basename "$0") [OPTIONS]
 Installiert 'webex serve' als systemd-Service auf SLES/Linux.
 
 OPTIONS:
-  -p PORT    Port der Bridge (Standard: ${DEFAULT_PORT})
-  -u USER    Benutzer der den Service ausführt (Standard: aktueller Benutzer)
-  -r         Service deinstallieren
-  -h         Diese Hilfe anzeigen
+  -p PORT      Port der Bridge (Standard: ${DEFAULT_PORT})
+  -u USER      Benutzer der den Service ausführt (Standard: aktueller Benutzer)
+  -i REPO      Repo-Pfad: installiert Tool via venv (ohne uv/pipx)
+  -v VENV      Venv-Pfad bei -i (Standard: ${DEFAULT_VENV})
+  -r           Service deinstallieren
+  -h           Diese Hilfe anzeigen
 
 BEISPIELE:
-  $(basename "$0")                    # installieren mit Standardwerten
-  $(basename "$0") -p 8080            # anderen Port
-  $(basename "$0") -u deploy          # anderen Benutzer
-  $(basename "$0") -r                 # deinstallieren
+  $(basename "$0")                          # installieren (webex muss im PATH sein)
+  $(basename "$0") -i /opt/src/webexApi     # installieren via venv
+  $(basename "$0") -i /opt/src/webexApi -v /opt/myvenv -p 8080
+  $(basename "$0") -u deploy -i /opt/src/webexApi
+  $(basename "$0") -r                       # deinstallieren
 EOF
 }
 
@@ -44,14 +48,46 @@ check_root() {
     fi
 }
 
+install_venv() {
+    local repo_path="$1"
+    local venv_path="$2"
+
+    [[ -f "${repo_path}/pyproject.toml" ]] \
+        || die "Kein gültiges Repo unter '${repo_path}' (pyproject.toml fehlt)."
+
+    local python_bin
+    python_bin=$(command -v python3) || die "python3 nicht gefunden."
+
+    local python_version
+    python_version=$("$python_bin" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+    local required_major=3 required_minor=12
+    local actual_major actual_minor
+    actual_major=$(echo "$python_version" | cut -d. -f1)
+    actual_minor=$(echo "$python_version" | cut -d. -f2)
+
+    if (( actual_major < required_major || (actual_major == required_major && actual_minor < required_minor) )); then
+        die "Python ${required_major}.${required_minor}+ erforderlich (gefunden: ${python_version})."
+    fi
+
+    log "Erstelle venv unter ${venv_path} (Python ${python_version})..."
+    "$python_bin" -m venv "$venv_path"
+
+    log "Installiere webexapi aus ${repo_path}..."
+    "${venv_path}/bin/pip" install --quiet --upgrade pip
+    "${venv_path}/bin/pip" install --quiet "${repo_path}"
+
+    log "Installation abgeschlossen: ${venv_path}/bin/webex"
+    echo "${venv_path}/bin/webex"
+}
+
 find_webex_binary() {
     local user="$1"
     local home_dir
     home_dir=$(getent passwd "$user" | cut -d: -f6)
 
-    # Reihenfolge: uv tool install, pipx, system PATH
     local candidates=(
         "${home_dir}/.local/bin/webex"
+        "${DEFAULT_VENV}/bin/webex"
         "/usr/local/bin/webex"
         "/usr/bin/webex"
     )
@@ -64,33 +100,34 @@ find_webex_binary() {
     done
 
     # Letzter Versuch: which als Ziel-User
-    if su - "$user" -c "which webex" 2>/dev/null; then
+    local found
+    found=$(su - "$user" -c "which webex 2>/dev/null" || true)
+    if [[ -n "$found" ]]; then
+        echo "$found"
         return 0
     fi
 
     return 1
 }
 
-install_service() {
-    local port="$1"
+write_service_file() {
+    local webex_bin="$1"
     local run_user="$2"
-
-    log "Suche webex-Binary für Benutzer '${run_user}'..."
-    local webex_bin
-    if ! webex_bin=$(find_webex_binary "$run_user"); then
-        die "'webex' nicht gefunden für Benutzer '${run_user}'.\n" \
-            "Bitte zuerst installieren: uv tool install /pfad/zum/repo"
-    fi
-    log "Binary gefunden: ${webex_bin}"
-
+    local port="$3"
     local home_dir
     home_dir=$(getent passwd "$run_user" | cut -d: -f6)
+
+    local repo_dir
+    repo_dir="$(cd "$(dirname "$0")" && pwd)"
+    local git_url
+    git_url=$(git -C "$repo_dir" remote get-url origin 2>/dev/null \
+        | sed 's|.*github.com[:/]||;s|\.git$||' || echo "webexapi")
 
     log "Erstelle ${SERVICE_FILE}..."
     cat > "$SERVICE_FILE" <<EOF
 [Unit]
 Description=Webex Webhook Bridge
-Documentation=https://github.com/$(git -C "$(dirname "$0")" remote get-url origin 2>/dev/null | sed 's|.*github.com[:/]||;s|\.git$||' || echo "webexapi")
+Documentation=https://github.com/${git_url}
 After=network.target
 
 [Service]
@@ -108,6 +145,29 @@ SyslogIdentifier=${SERVICE_NAME}
 [Install]
 WantedBy=multi-user.target
 EOF
+}
+
+install_service() {
+    local port="$1"
+    local run_user="$2"
+    local repo_path="$3"
+    local venv_path="$4"
+
+    local webex_bin
+
+    if [[ -n "$repo_path" ]]; then
+        webex_bin=$(install_venv "$repo_path" "$venv_path")
+    else
+        log "Suche webex-Binary für Benutzer '${run_user}'..."
+        if ! webex_bin=$(find_webex_binary "$run_user"); then
+            die "'webex' nicht gefunden. Optionen:\n" \
+                "  Mit venv:  sudo bash $(basename "$0") -i /pfad/zum/repo\n" \
+                "  Mit uv:    uv tool install /pfad/zum/repo"
+        fi
+    fi
+    log "Binary: ${webex_bin}"
+
+    write_service_file "$webex_bin" "$run_user" "$port"
 
     log "Lade systemd-Konfiguration neu..."
     systemctl daemon-reload
@@ -135,7 +195,7 @@ uninstall_service() {
     fi
 
     log "Stoppe und deaktiviere ${SERVICE_NAME}..."
-    systemctl stop "${SERVICE_NAME}.service"    || true
+    systemctl stop    "${SERVICE_NAME}.service" || true
     systemctl disable "${SERVICE_NAME}.service" || true
 
     log "Lösche ${SERVICE_FILE}..."
@@ -151,12 +211,16 @@ uninstall_service() {
 
 port="${DEFAULT_PORT}"
 run_user="${SUDO_USER:-$(whoami)}"
+repo_path=""
+venv_path="${DEFAULT_VENV}"
 remove=false
 
-while getopts ":p:u:rh" opt; do
+while getopts ":p:u:i:v:rh" opt; do
     case "$opt" in
         p) port="$OPTARG" ;;
         u) run_user="$OPTARG" ;;
+        i) repo_path="$OPTARG" ;;
+        v) venv_path="$OPTARG" ;;
         r) remove=true ;;
         h) usage; exit 0 ;;
         :) die "Option -${OPTARG} benötigt ein Argument." ;;
@@ -173,15 +237,17 @@ check_root
 if [[ "$remove" == true ]]; then
     uninstall_service
 else
-    # Benutzer validieren
     if ! id "$run_user" &>/dev/null; then
         die "Benutzer '${run_user}' existiert nicht."
     fi
 
-    # Port validieren
     if ! [[ "$port" =~ ^[0-9]+$ ]] || (( port < 1 || port > 65535 )); then
         die "Ungültiger Port: ${port}"
     fi
 
-    install_service "$port" "$run_user"
+    if [[ -n "$repo_path" && ! -d "$repo_path" ]]; then
+        die "Repo-Verzeichnis nicht gefunden: ${repo_path}"
+    fi
+
+    install_service "$port" "$run_user" "$repo_path" "$venv_path"
 fi
