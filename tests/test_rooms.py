@@ -1,13 +1,11 @@
 """Tests für Raumladen und -auflösung."""
 
-import json
-import pytest
 from pathlib import Path
 from unittest.mock import patch
 
-import send_message
-from tests.conftest import SAMPLE_ROOMS
+import pytest
 
+import send_message
 
 # ---------------------------------------------------------------------------
 # _load_rooms

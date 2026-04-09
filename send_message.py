@@ -27,6 +27,13 @@ REDIRECT_URI = "http://localhost:8080/callback"
 ROOMLIST_PATH = Path(__file__).parent / "roomlist.json"
 TOKENS_PATH = Path(__file__).parent / ".webex_tokens.json"
 
+CARD_COLOR_MAP = {
+    "default": "Default",
+    "good": "Good",
+    "warning": "Warning",
+    "attention": "Attention",
+}
+
 
 # ---------------------------------------------------------------------------
 # Token-Speicherung
@@ -114,6 +121,11 @@ def _resolve_room(room_arg: str) -> str:
         typer.echo("Bitte genaueren Namen oder die Room-ID angeben.", err=True)
         raise typer.Exit(1)
 
+    # Nicht in roomlist.json — als rohe ID weitergeben, aber warnen
+    typer.echo(
+        f"Warnung: '{room_arg}' nicht in roomlist.json, verwende als Room-ID direkt.",
+        err=True,
+    )
     return room_arg
 
 
@@ -168,6 +180,16 @@ def _send_payload(auth_token: str, payload: dict) -> str:
     msg_id = response.json()["id"]
     typer.echo(f"Gesendet: {msg_id}")
     return msg_id
+
+
+def _build_message_fields(target: dict, text: str, markdown: bool) -> dict:
+    """Erstellt das Basis-Payload für eine Textnachricht."""
+    fields = dict(target)
+    if markdown:
+        fields["markdown"] = text
+    else:
+        fields["text"] = text
+    return fields
 
 
 def _send_multipart(auth_token: str, fields: dict, file_path: Path) -> str:
@@ -291,9 +313,13 @@ def login() -> None:
     tokens["expires_at"] = time.time() + tokens["expires_in"] - 60
     _save_tokens(tokens)
 
+    expires_str = time.strftime("%Y-%m-%d %H:%M", time.localtime(tokens["expires_at"]))
+    refresh_days = tokens.get("refresh_token_expires_in", "?")
+    if isinstance(refresh_days, int):
+        refresh_days = refresh_days // 86400
     typer.echo(f"Eingeloggt. Token gespeichert in {TOKENS_PATH}")
-    typer.echo(f"Gültig bis: {time.strftime('%Y-%m-%d %H:%M', time.localtime(tokens['expires_at']))}")
-    typer.echo(f"Refresh Token läuft ab in {tokens.get('refresh_token_expires_in', '?') // 86400} Tagen.")
+    typer.echo(f"Gültig bis: {expires_str}")
+    typer.echo(f"Refresh Token läuft ab in {refresh_days} Tagen.")
 
 
 @app.command()
@@ -314,61 +340,43 @@ def logout() -> None:
 def send(
     room: str = typer.Argument(..., help="Raumname (Teilstring) oder Room-ID"),
     text: str = typer.Argument(..., help="Zu sendende Nachricht"),
-    markdown: bool = typer.Option(False, "--markdown/--no-markdown", help="Text als Markdown senden"),
+    markdown: bool = typer.Option(False, "--markdown/--no-markdown", help="Als Markdown senden"),
     file: Optional[Path] = typer.Option(None, "--file", "-f", help="Dateianhang (lokal)"),
-    token: Optional[str] = typer.Option(None, "--token", help="Webex-Token (überschreibt alles)"),
+    token: Optional[str] = typer.Option(None, "--token", help="Token (überschreibt alles)"),
 ) -> None:
     """Nachricht an einen Webex-Raum senden, optional mit Dateianhang."""
     auth_token = _get_token(token)
     room_id = _resolve_room(room)
 
+    fields = _build_message_fields({"roomId": room_id}, text, markdown)
     if file:
         if not file.exists():
             typer.echo(f"Datei nicht gefunden: {file}", err=True)
             raise typer.Exit(1)
-        fields: dict = {"roomId": room_id}
-        if markdown:
-            fields["markdown"] = text
-        else:
-            fields["text"] = text
         _send_multipart(auth_token, fields, file)
     else:
-        payload: dict = {"roomId": room_id}
-        if markdown:
-            payload["markdown"] = text
-        else:
-            payload["text"] = text
-        _send_payload(auth_token, payload)
+        _send_payload(auth_token, fields)
 
 
 @app.command()
 def dm(
     email: str = typer.Argument(..., help="E-Mail-Adresse der Person"),
     text: str = typer.Argument(..., help="Zu sendende Nachricht"),
-    markdown: bool = typer.Option(False, "--markdown/--no-markdown", help="Text als Markdown senden"),
+    markdown: bool = typer.Option(False, "--markdown/--no-markdown", help="Als Markdown senden"),
     file: Optional[Path] = typer.Option(None, "--file", "-f", help="Dateianhang (lokal)"),
-    token: Optional[str] = typer.Option(None, "--token", help="Webex-Token (überschreibt alles)"),
+    token: Optional[str] = typer.Option(None, "--token", help="Token (überschreibt alles)"),
 ) -> None:
     """Direkt-Nachricht an eine Person per E-Mail senden."""
     auth_token = _get_token(token)
 
+    fields = _build_message_fields({"toPersonEmail": email}, text, markdown)
     if file:
         if not file.exists():
             typer.echo(f"Datei nicht gefunden: {file}", err=True)
             raise typer.Exit(1)
-        fields = {"toPersonEmail": email}
-        if markdown:
-            fields["markdown"] = text
-        else:
-            fields["text"] = text
         _send_multipart(auth_token, fields, file)
     else:
-        payload: dict = {"toPersonEmail": email}
-        if markdown:
-            payload["markdown"] = text
-        else:
-            payload["text"] = text
-        _send_payload(auth_token, payload)
+        _send_payload(auth_token, fields)
 
 
 class CardColor(str, Enum):
@@ -383,22 +391,15 @@ def card(
     room: str = typer.Argument(..., help="Raumname (Teilstring) oder Room-ID"),
     title: str = typer.Option(..., "--title", "-t", help="Titel der Karte"),
     text: str = typer.Option(..., "--text", "-m", help="Nachrichtentext"),
-    color: CardColor = typer.Option(CardColor.default, "--color", "-c", help="Titelfarbe: default, good, warning, attention"),
+    color: CardColor = typer.Option(CardColor.default, "--color", "-c", help="Farbe"),
     url: Optional[str] = typer.Option(None, "--url", "-u", help="URL für einen Button"),
-    url_label: str = typer.Option("Details", "--url-label", help="Beschriftung des URL-Buttons"),
-    facts: Optional[list[str]] = typer.Option(None, "--fact", help="Key=Value (wiederholbar, z.B. --fact Host=server1 --fact Status=offline)"),
-    token: Optional[str] = typer.Option(None, "--token", help="Webex-Token (überschreibt alles)"),
+    url_label: str = typer.Option("Details", "--url-label", help="Button-Beschriftung"),
+    facts: Optional[list[str]] = typer.Option(None, "--fact", help="Key=Value (wiederholbar)"),
+    token: Optional[str] = typer.Option(None, "--token", help="Token (überschreibt alles)"),
 ) -> None:
     """Adaptive Card mit Titel, Text, optionalen Facts und Button senden."""
     auth_token = _get_token(token)
     room_id = _resolve_room(room)
-
-    color_map = {
-        CardColor.default: "Default",
-        CardColor.good: "Good",
-        CardColor.warning: "Warning",
-        CardColor.attention: "Attention",
-    }
 
     body: list[dict] = [
         {
@@ -406,7 +407,7 @@ def card(
             "text": title,
             "weight": "Bolder",
             "size": "Large",
-            "color": color_map[color],
+            "color": CARD_COLOR_MAP[color.value],
         },
         {
             "type": "TextBlock",
@@ -543,32 +544,27 @@ def serve(
     Erwartet JSON: {"title": "...", "text": "...", "color": "good|warning|attention"}
     Felder 'title' und 'text' sind Pflicht, der Rest optional.
     """
-    from flask import Flask, Response, request as flask_request
+    from flask import Flask, Response
+    from flask import request as flask_request
 
     auth_token = _get_token(token)
     room_id = _resolve_room(room)
 
     flask_app = Flask(__name__)
 
-    color_map = {
-        "good": "Good",
-        "warning": "Warning",
-        "attention": "Attention",
-        "default": "Default",
-    }
-
     @flask_app.post("/notify")
     def notify() -> Response:
         data = flask_request.get_json(silent=True) or {}
         title = data.get("title", "Notification")
         text = data.get("text", "")
-        color = color_map.get(data.get("color", "default"), "Default")
+        color = CARD_COLOR_MAP.get(data.get("color", "default"), "Default")
         url = data.get("url")
         url_label = data.get("url_label", "Details")
         facts_raw: dict = data.get("facts", {})
 
         body: list[dict] = [
-            {"type": "TextBlock", "text": title, "weight": "Bolder", "size": "Large", "color": color},
+            {"type": "TextBlock", "text": title, "weight": "Bolder", "size": "Large",
+             "color": color},
             {"type": "TextBlock", "text": text, "wrap": True},
         ]
 
@@ -590,15 +586,21 @@ def serve(
         try:
             httpx.post(
                 f"{WEBEX_API}/messages",
-                headers={"Authorization": f"Bearer {auth_token}", "Content-Type": "application/json"},
+                headers={
+                    "Authorization": f"Bearer {auth_token}",
+                    "Content-Type": "application/json",
+                },
                 json={
                     "roomId": room_id,
                     "text": title,
-                    "attachments": [{"contentType": "application/vnd.microsoft.card.adaptive", "content": card_content}],
+                    "attachments": [{
+                        "contentType": "application/vnd.microsoft.card.adaptive",
+                        "content": card_content,
+                    }],
                 },
                 timeout=10,
             ).raise_for_status()
-        except Exception as e:
+        except (httpx.HTTPStatusError, httpx.RequestError) as e:
             return Response(json.dumps({"error": str(e)}), status=500, mimetype="application/json")
 
         return Response(json.dumps({"ok": True}), status=200, mimetype="application/json")
@@ -615,7 +617,7 @@ def serve(
 @app.command(name="apprise-url")
 def apprise_url(
     room: str = typer.Argument(..., help="Raumname (Teilstring) oder Room-ID"),
-    token: Optional[str] = typer.Option(None, "--token", help="Bot-Token (überschreibt WEBEX_TOKEN)"),
+    token: Optional[str] = typer.Option(None, "--token", help="Bot-Token (überschreibt WEBEX_TOKEN)"),  # noqa: E501
 ) -> None:
     """Apprise-URL für einen Raum ausgeben (wxteams://<token>/<room-id>/)."""
     bot_token = token or os.environ.get("WEBEX_TOKEN")

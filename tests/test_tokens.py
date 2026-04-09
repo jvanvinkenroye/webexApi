@@ -1,13 +1,12 @@
 """Tests für Token-Speicherung und -Auflösung."""
 
-import json
 import time
-import pytest
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
+
+import pytest
 
 import send_message
-
 
 # ---------------------------------------------------------------------------
 # _load_tokens / _save_tokens
@@ -73,7 +72,8 @@ def test_oauth_token_expired_refresh_succeeds(tmp_path: Path) -> None:
 
     with patch.object(send_message, "TOKENS_PATH", path):
         send_message._save_tokens(expired)
-        with patch.object(send_message, "_refresh_access_token", return_value={**new_data, "expires_at": time.time() + 7200}):
+        refreshed = {**new_data, "expires_at": time.time() + 7200}
+        with patch.object(send_message, "_refresh_access_token", return_value=refreshed):
             token = send_message._get_valid_oauth_token()
 
     assert token == "new-token"
@@ -88,7 +88,9 @@ def test_oauth_token_expired_refresh_fails(tmp_path: Path, capsys) -> None:
     }
     with patch.object(send_message, "TOKENS_PATH", path):
         send_message._save_tokens(expired)
-        with patch.object(send_message, "_refresh_access_token", side_effect=RuntimeError("Netzwerkfehler")):
+        with patch.object(
+            send_message, "_refresh_access_token", side_effect=RuntimeError("Netzwerkfehler")
+        ):
             token = send_message._get_valid_oauth_token()
 
     assert token is None

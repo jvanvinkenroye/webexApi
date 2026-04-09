@@ -1,6 +1,5 @@
 """Tests für CLI-Befehle via typer CliRunner."""
 
-import json
 import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -10,7 +9,6 @@ from typer.testing import CliRunner
 
 import send_message
 from send_message import app
-from tests.conftest import SAMPLE_ROOMS
 
 runner = CliRunner()
 
@@ -100,7 +98,8 @@ def test_send_file(valid_token, tmp_path: Path) -> None:
 
 
 def test_send_missing_file(valid_token, tmp_path: Path) -> None:
-    result = runner.invoke(app, ["send", "alpha", "Fehler", "--file", str(tmp_path / "missing.log")])
+    missing = str(tmp_path / "missing.log")
+    result = runner.invoke(app, ["send", "alpha", "Fehler", "--file", missing])
     assert result.exit_code == 1
 
 

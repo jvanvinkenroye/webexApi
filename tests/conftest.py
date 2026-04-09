@@ -1,9 +1,9 @@
 """Gemeinsame Fixtures für alle Tests."""
 
 import json
-import pytest
 from pathlib import Path
 
+import pytest
 
 SAMPLE_ROOMS = [
     {
