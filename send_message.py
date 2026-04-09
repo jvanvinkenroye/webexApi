@@ -24,8 +24,11 @@ WEBEX_TOKEN_URL = "https://webexapis.com/v1/access_token"
 OAUTH_SCOPES = "spark:messages_write spark:messages_read spark:rooms_read"
 REDIRECT_URI = "http://localhost:8080/callback"
 
-ROOMLIST_PATH = Path(__file__).parent / "roomlist.json"
-TOKENS_PATH = Path(__file__).parent / ".webex_tokens.json"
+_CONFIG_DIR = Path(os.environ.get("WEBEX_CONFIG_DIR", Path.home() / ".config" / "webexapi"))
+_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+
+ROOMLIST_PATH = _CONFIG_DIR / "roomlist.json"
+TOKENS_PATH = _CONFIG_DIR / ".webex_tokens.json"
 
 CARD_COLOR_MAP = {
     "default": "Default",
