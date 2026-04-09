@@ -595,7 +595,7 @@ def rooms_update(
 def _notify_room(auth_token: str, room_id: str, data: dict) -> tuple[dict, int]:
     """Sendet eine Adaptive Card an room_id basierend auf dem Payload-Dict."""
     title = data.get("title", "Notification")
-    text = data.get("text", "")
+    text = data.get("text") or data.get("message", "")
     color = CARD_COLOR_MAP.get(data.get("color", "default"), "Default")
     url = data.get("url")
     url_label = data.get("url_label", "Details")
