@@ -292,14 +292,13 @@ def test_card_with_separator(valid_token) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_apprise_url_output(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("WEBEX_TOKEN", "my-bot-token")
+def test_apprise_url_output() -> None:
     result = runner.invoke(app, ["apprise-url", "alpha"])
     assert result.exit_code == 0
-    assert "wxteams://my-bot-token/room-id-alpha/" in result.output
+    assert "json://localhost:9000/notify" in result.output
 
 
-def test_apprise_url_no_token(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("WEBEX_TOKEN", raising=False)
-    result = runner.invoke(app, ["apprise-url", "alpha"])
-    assert result.exit_code == 1
+def test_apprise_url_custom_host_port() -> None:
+    result = runner.invoke(app, ["apprise-url", "alpha", "--host", "10.0.0.1", "--port", "8080"])
+    assert result.exit_code == 0
+    assert "json://10.0.0.1:8080/notify" in result.output

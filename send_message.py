@@ -686,18 +686,17 @@ def serve(
 @app.command(name="apprise-url")
 def apprise_url(
     room: str = typer.Argument(..., help="Raumname (Teilstring) oder Room-ID"),
-    token: Optional[str] = typer.Option(
-        None, "--token", help="Bot-Token (überschreibt WEBEX_TOKEN)"
-    ),  # noqa: E501
+    host: str = typer.Option("localhost", "--host", help="Hostname/IP der serve-Bridge"),
+    port: int = typer.Option(9000, "--port", "-p", help="Port der serve-Bridge"),
 ) -> None:
-    """Apprise-URL für einen Raum ausgeben (wxteams://<token>/<room-id>/)."""
-    bot_token = token or os.environ.get("WEBEX_TOKEN") or _load_config().get("bot_token")
-    if not bot_token:
-        typer.echo("Kein Bot-Token. Setze WEBEX_TOKEN, --token oder webex setup.", err=True)
-        raise typer.Exit(1)
+    """Apprise-URL für die serve-Bridge ausgeben (json://<host>:<port>/notify).
 
-    room_id = _resolve_room(room)
-    typer.echo(f"wxteams://{bot_token}/{room_id}/")
+    Webex hat Incoming Webhooks abgeschafft. Stattdessen serve-Bridge starten:
+      webex serve <raum> --port 9000
+    """
+    _resolve_room(room)  # Raum validieren, Warnung ausgeben falls unbekannt
+    typer.echo(f"json://{host}:{port}/notify")
+    typer.echo(f"\nBridge starten mit: webex serve {room} --port {port}", err=True)
 
 
 @app.command()
