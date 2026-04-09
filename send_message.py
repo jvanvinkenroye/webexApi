@@ -691,9 +691,9 @@ def apprise_url(
     ),  # noqa: E501
 ) -> None:
     """Apprise-URL für einen Raum ausgeben (wxteams://<token>/<room-id>/)."""
-    bot_token = token or os.environ.get("WEBEX_TOKEN")
+    bot_token = token or os.environ.get("WEBEX_TOKEN") or _load_config().get("bot_token")
     if not bot_token:
-        typer.echo("Kein Bot-Token. Setze WEBEX_TOKEN oder benutze --token.", err=True)
+        typer.echo("Kein Bot-Token. Setze WEBEX_TOKEN, --token oder webex setup.", err=True)
         raise typer.Exit(1)
 
     room_id = _resolve_room(room)
