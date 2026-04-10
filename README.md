@@ -4,6 +4,8 @@ CLI-Tool zum Senden von Nachrichten, Adaptive Cards und Dateien an Webex-Räume.
 
 ## Installation
 
+### Mit uv (Entwicklung / macOS)
+
 ```bash
 # Entwicklung
 uv sync
@@ -12,7 +14,31 @@ uv sync
 uv tool install .
 ```
 
-Nach globaler Installation ersetzt `webex` das `uv run python send_message.py`.
+### Mit pip / venv (Server, kein uv)
+
+```bash
+python3 -m venv /opt/webexapi
+/opt/webexapi/bin/pip install /pfad/zum/repo
+# Binary: /opt/webexapi/bin/webex
+```
+
+### Mit Docker
+
+```bash
+# Image bauen und Bridge starten:
+WEBEX_TOKEN=<token> docker compose up -d
+```
+
+Token kann auch in einer `.env`-Datei neben `compose.yml` stehen:
+```bash
+echo "WEBEX_TOKEN=<token>" > .env
+docker compose up -d
+```
+
+Roomlist einmalig befüllen:
+```bash
+docker exec -it <container> webex rooms-update
+```
 
 ---
 
@@ -199,34 +225,40 @@ webex list --search "monitoring"  # gefiltert
 
 ### `serve` — Webhook-Bridge
 
-Startet einen HTTP-Server der `POST /notify` empfängt und als Adaptive Card nach Webex weiterleitet. Für Dienste ohne natives Apprise-Support (Grafana, Alertmanager, eigene Skripte).
+Startet einen HTTP-Server der Nachrichten als Adaptive Cards nach Webex weiterleitet.
+Eine Instanz bedient **alle Räume** — der Zielraum steht in der URL.
 
 ```bash
-webex serve monitoring --port 9000
-webex serve monitoring --port 9000 --host 127.0.0.1
+webex serve --port 9000          # Standard-Raum aus config.json
+webex serve monitoring --port 9000   # expliziter Standard-Raum
 ```
 
-Erwartetes JSON-Payload:
+**Routen:**
+
+| Route | Beschreibung |
+|-------|-------------|
+| `POST /notify/<raum>` | Nachricht an beliebigen Raum (Teilstring oder Room-ID) |
+| `POST /notify` | Nachricht an Standard-Raum |
+| `GET /health` | Health-Check |
+
+**JSON-Payload** (`text` und `message` werden beide akzeptiert):
 
 ```json
 {
   "title": "Deployment",
   "text": "Version 2.4.1 ist live",
   "color": "good",
-  "facts": {
-    "Host": "server1",
-    "Dauer": "3m"
-  },
+  "facts": { "Host": "server1", "Dauer": "3m" },
   "url": "https://monitoring.example.com",
   "url_label": "Details"
 }
 ```
 
-Felder `title` und `text` sind Pflicht, alles andere optional.
+Felder `title` und `text`/`message` sind Pflicht, alles andere optional.
 
 ```bash
 # Testen:
-curl -X POST http://localhost:9000/notify \
+curl -X POST http://localhost:9000/notify/BotTestBereich \
   -H "Content-Type: application/json" \
   -d '{"title":"Test","text":"Webhook funktioniert","color":"good"}'
 
@@ -234,19 +266,46 @@ curl -X POST http://localhost:9000/notify \
 curl http://localhost:9000/health
 ```
 
+**Als systemd-Service (SLES/Linux):**
+
+```bash
+# Mit venv (kein uv nötig):
+sudo bash install-service.sh -i /pfad/zum/repo
+
+# Mit uv vorinstalliert:
+sudo bash install-service.sh
+
+# Optionen:
+sudo bash install-service.sh -i /pfad/zum/repo -p 8080 -u deploy
+sudo bash install-service.sh -r   # deinstallieren
+```
+
+**Als Docker-Container:**
+
+```bash
+WEBEX_TOKEN=<token> docker compose up -d
+```
+
 ---
 
 ### `apprise-url` — URL für Apprise generieren
 
-Für Dienste mit nativer Apprise-Unterstützung (Uptime Kuma, Gotify, etc.):
+Gibt eine `json://`-URL zur serve-Bridge aus — direkt in Apprise eintragen:
 
 ```bash
 webex apprise-url monitoring
-# → wxteams://<bot-token>/<room-id>/
+# → json://localhost:9000/notify/<room-id>
+
+webex apprise-url monitoring --host mein-server.example.com --port 8080
+# → json://mein-server.example.com:8080/notify/<room-id>
 ```
 
-Gibt die URL direkt aus — in Apprise als Notification-URL eintragen.
-Erfordert Bot-Token (`WEBEX_TOKEN` oder `--token`).
+Voraussetzung: serve-Bridge läuft (`webex serve` oder Docker).
+
+```bash
+# Apprise-Beispiel:
+apprise -t "Alert" -b "Server down" "json://localhost:9000/notify/<room-id>"
+```
 
 ---
 
