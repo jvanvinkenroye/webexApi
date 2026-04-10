@@ -1,0 +1,28 @@
+services:
+  webex-bridge:
+    build: .
+    image: webex-bridge:latest
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+    volumes:
+      - webex-data:/data
+    environment:
+      # Bot-Token direkt als Env-Var ODER in /data/config.json (via webex setup)
+      - WEBEX_TOKEN=${WEBEX_TOKEN:-}
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:9000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  webex-data:
+    # Alternativ: lokales Verzeichnis mounten
+    # driver: local
+    # driver_opts:
+    #   type: none
+    #   o: bind
+    #   device: /opt/webexapi/data

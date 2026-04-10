@@ -1,0 +1,24 @@
+# Versionskontrolle
+.git/
+.gitignore
+
+# Python-Artefakte
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+.venv/
+
+# Tests und Entwicklung
+tests/
+notes/
+*.md
+install-service.sh
+
+# Secrets und lokale Konfiguration
+.env
+*.txt
+roomlist.json
+sandbox.txt
+us-tik-nfl-notibot.txt
