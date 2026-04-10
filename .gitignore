@@ -14,5 +14,8 @@ wheels/
 us-tik-nfl-notibot.txt
 sandbox.txt
 
+# Lokale Raumliste (enthält Raum-IDs; wird per 'webex rooms-update' erzeugt)
+roomlist.json
+
 # Claude intern
 .claude/

@@ -59,8 +59,14 @@ def test_resolve_multiple_matches_exits(capsys) -> None:
         send_message._resolve_room("a")
 
 
-def test_resolve_unknown_returns_raw_with_warning(capsys) -> None:
-    result = send_message._resolve_room("unbekannt-xyz")
+def test_resolve_unknown_raises_room_not_found() -> None:
+    with pytest.raises(send_message.RoomNotFoundError):
+        send_message._resolve_room("unbekannt-xyz")
+
+
+def test_get_room_unknown_falls_back_to_raw_id_with_warning(capsys) -> None:
+    """_get_room gibt die unbekannte Zeichenkette als rohe Room-ID zurück und warnt."""
+    result = send_message._get_room("unbekannt-xyz")
     assert result == "unbekannt-xyz"
     captured = capsys.readouterr()
     assert "Warnung" in captured.err

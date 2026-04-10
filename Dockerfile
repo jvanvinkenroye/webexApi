@@ -1,17 +1,18 @@
 # syntax=docker/dockerfile:1
 
 # ---------------------------------------------------------------------------
-# Stage 1: Abhängigkeiten installieren
+# Stage 1: Abhängigkeiten installieren (reproduzierbar via uv.lock)
 # ---------------------------------------------------------------------------
 FROM python:3.12-slim AS builder
 
 WORKDIR /build
 
-COPY pyproject.toml send_message.py ./
+# uv installieren
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
-RUN python -m venv /venv \
-    && /venv/bin/pip install --no-cache-dir --upgrade pip \
-    && /venv/bin/pip install --no-cache-dir .
+COPY pyproject.toml uv.lock send_message.py ./
+
+RUN uv sync --frozen --no-dev --no-editable
 
 # ---------------------------------------------------------------------------
 # Stage 2: Minimales Runtime-Image
@@ -22,7 +23,7 @@ FROM python:3.12-slim AS runtime
 RUN useradd --system --create-home --uid 1000 webex
 
 # Venv aus Build-Stage übernehmen
-COPY --from=builder /venv /venv
+COPY --from=builder /build/.venv /venv
 
 # Datenverzeichnis für config.json und roomlist.json
 RUN mkdir -p /data && chown webex:webex /data

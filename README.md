@@ -228,6 +228,8 @@ webex list --search "monitoring"  # gefiltert
 Startet einen HTTP-Server der Nachrichten als Adaptive Cards nach Webex weiterleitet.
 Eine Instanz bedient **alle Räume** — der Zielraum steht in der URL.
 
+Der Server verwendet **waitress** als produktionsreifen WSGI-Server (wird automatisch installiert).
+
 ```bash
 webex serve --port 9000          # Standard-Raum aus config.json
 webex serve monitoring --port 9000   # expliziter Standard-Raum
@@ -339,5 +341,5 @@ Wenn ein Standard-Raum konfiguriert ist, kann das Argument weggelassen werden.
 |------|-------------|
 | `send_message.py` | CLI-Hauptskript |
 | `~/.config/webexapi/config.json` | Bot-Token, Standard-Raum, OAuth-Credentials (chmod 600) |
-| `~/.config/webexapi/roomlist.json` | Gecachte Raumliste (via `rooms-update` befüllen) |
+| `~/.config/webexapi/roomlist.json` | Gecachte Raumliste (via `rooms-update` befüllen; nicht versioniert) |
 | `~/.config/webexapi/.webex_tokens.json` | OAuth-Tokens (auto-generiert, chmod 600) |

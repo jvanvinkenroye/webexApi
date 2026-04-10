@@ -26,11 +26,13 @@ def patch_paths(tmp_path: Path, roomlist_file: Path):
 
 @pytest.fixture
 def valid_token(tmp_path: Path):
-    """Speichert einen gültigen OAuth-Token für Tests."""
-    path = tmp_path / "tokens.json"
+    """Speichert einen gültigen OAuth-Token für Tests.
+
+    patch_paths (autouse) hat TOKENS_PATH bereits auf tmp_path / "tokens.json" gesetzt,
+    deshalb reicht ein direkter Aufruf von _save_tokens ohne zusätzliches patch.object.
+    """
     data = {"access_token": "test-token", "refresh_token": "r", "expires_at": time.time() + 3600}
-    with patch.object(send_message, "TOKENS_PATH", path):
-        send_message._save_tokens(data)
+    send_message._save_tokens(data)
     return "test-token"
 
 

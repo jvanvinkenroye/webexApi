@@ -10,7 +10,6 @@ import webbrowser
 from enum import Enum
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from typing import Optional
 from urllib.parse import parse_qs, urlencode, urlparse
 
 import httpx
@@ -25,11 +24,15 @@ OAUTH_SCOPES = "spark:messages_write spark:messages_read spark:rooms_read"
 REDIRECT_URI = "http://localhost:8080/callback"
 
 _CONFIG_DIR = Path(os.environ.get("WEBEX_CONFIG_DIR", Path.home() / ".config" / "webexapi"))
-_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
 ROOMLIST_PATH = _CONFIG_DIR / "roomlist.json"
 TOKENS_PATH = _CONFIG_DIR / ".webex_tokens.json"
 CONFIG_PATH = _CONFIG_DIR / "config.json"
+
+
+def _ensure_config_dir() -> None:
+    """Erstellt das Konfigurationsverzeichnis bei Bedarf (lazy)."""
+    _CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
 CARD_COLOR_MAP = {
     "default": "Default",
@@ -39,6 +42,10 @@ CARD_COLOR_MAP = {
 }
 
 
+class RoomNotFoundError(Exception):
+    """Wird ausgelöst wenn ein Raum nicht in der roomlist gefunden wird."""
+
+
 # ---------------------------------------------------------------------------
 # Konfiguration
 # ---------------------------------------------------------------------------
@@ -46,11 +53,15 @@ CARD_COLOR_MAP = {
 
 def _load_config() -> dict:
     if CONFIG_PATH.exists():
-        return json.loads(CONFIG_PATH.read_text())
+        try:
+            return json.loads(CONFIG_PATH.read_text())
+        except json.JSONDecodeError:
+            typer.echo("Warnung: config.json ist beschädigt und wird ignoriert.", err=True)
     return {}
 
 
 def _save_config(data: dict) -> None:
+    _ensure_config_dir()
     CONFIG_PATH.write_text(json.dumps(data, indent=2))
     CONFIG_PATH.chmod(0o600)
 
@@ -62,11 +73,15 @@ def _save_config(data: dict) -> None:
 
 def _load_tokens() -> dict | None:
     if TOKENS_PATH.exists():
-        return json.loads(TOKENS_PATH.read_text())
+        try:
+            return json.loads(TOKENS_PATH.read_text())
+        except json.JSONDecodeError:
+            typer.echo("Warnung: Token-Datei ist beschädigt, bitte erneut einloggen.", err=True)
     return None
 
 
 def _save_tokens(data: dict) -> None:
+    _ensure_config_dir()
     TOKENS_PATH.write_text(json.dumps(data, indent=2))
     TOKENS_PATH.chmod(0o600)
 
@@ -91,7 +106,7 @@ def _refresh_access_token(tokens: dict) -> dict:
     )
     response.raise_for_status()
     new = response.json()
-    new["expires_at"] = time.time() + new["expires_in"] - 60
+    new["expires_at"] = time.time() + new.get("expires_in", 3600) - 60
     return new
 
 
@@ -144,22 +159,31 @@ def _resolve_room(room_arg: str) -> str:
         typer.echo("Bitte genaueren Namen oder die Room-ID angeben.", err=True)
         raise typer.Exit(1)
 
-    # Nicht in roomlist.json — als rohe ID weitergeben, aber warnen
-    typer.echo(
-        f"Warnung: '{room_arg}' nicht in roomlist.json, verwende als Room-ID direkt.",
-        err=True,
-    )
-    return room_arg
+    raise RoomNotFoundError(room_arg)
 
 
-def _get_room(room: Optional[str]) -> str:
+def _get_room(room: str | None) -> str:
     """Raum-ID auflösen: explizites Argument oder Standard-Raum aus Config."""
     if room:
-        return _resolve_room(room)
+        try:
+            return _resolve_room(room)
+        except RoomNotFoundError:
+            typer.echo(
+                f"Warnung: '{room}' nicht in roomlist.json, verwende als Room-ID direkt.",
+                err=True,
+            )
+            return room
     cfg = _load_config()
     default = cfg.get("default_room")
     if default:
-        return _resolve_room(default)
+        try:
+            return _resolve_room(default)
+        except RoomNotFoundError:
+            typer.echo(
+                f"Warnung: '{default}' nicht in roomlist.json, verwende als Room-ID direkt.",
+                err=True,
+            )
+            return default
     typer.echo("Kein Raum angegeben und kein Standard-Raum konfiguriert.", err=True)
     raise typer.Exit(1)
 
@@ -169,7 +193,7 @@ def _get_room(room: Optional[str]) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _get_token(token: Optional[str]) -> str:
+def _get_token(token: str | None) -> str:
     if token:
         return token
 
@@ -236,16 +260,17 @@ def _build_message_fields(target: dict, text: str, markdown: bool) -> dict:
 def _send_multipart(auth_token: str, fields: dict, file_path: Path) -> str:
     """Nachricht mit Dateianhang über multipart/form-data senden."""
     mime = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
-    files = {"files": (file_path.name, file_path.read_bytes(), mime)}
     try:
-        response = httpx.post(
-            f"{WEBEX_API}/messages",
-            headers={"Authorization": f"Bearer {auth_token}"},
-            data=fields,
-            files=files,
-            timeout=30,
-        )
-        response.raise_for_status()
+        with open(file_path, "rb") as fh:
+            files = {"files": (file_path.name, fh, mime)}
+            response = httpx.post(
+                f"{WEBEX_API}/messages",
+                headers={"Authorization": f"Bearer {auth_token}"},
+                data=fields,
+                files=files,
+                timeout=30,
+            )
+            response.raise_for_status()
     except httpx.HTTPStatusError as e:
         typer.echo(f"Fehler {e.response.status_code}: {e.response.text}", err=True)
         raise typer.Exit(1)
@@ -382,11 +407,11 @@ def logout() -> None:
 
 @app.command()
 def send(
-    room: Optional[str] = typer.Argument(None, help="Raumname (Teilstring) oder Room-ID"),
+    room: str | None = typer.Argument(None, help="Raumname (Teilstring) oder Room-ID"),
     text: str = typer.Argument(..., help="Zu sendende Nachricht"),
     markdown: bool = typer.Option(False, "--markdown/--no-markdown", help="Als Markdown senden"),
-    file: Optional[Path] = typer.Option(None, "--file", "-f", help="Dateianhang (lokal)"),
-    token: Optional[str] = typer.Option(None, "--token", help="Token (überschreibt alles)"),
+    file: Path | None = typer.Option(None, "--file", "-f", help="Dateianhang (lokal)"),
+    token: str | None = typer.Option(None, "--token", help="Token (überschreibt alles)"),
 ) -> None:
     """Nachricht an einen Webex-Raum senden, optional mit Dateianhang."""
     auth_token = _get_token(token)
@@ -407,8 +432,8 @@ def dm(
     email: str = typer.Argument(..., help="E-Mail-Adresse der Person"),
     text: str = typer.Argument(..., help="Zu sendende Nachricht"),
     markdown: bool = typer.Option(False, "--markdown/--no-markdown", help="Als Markdown senden"),
-    file: Optional[Path] = typer.Option(None, "--file", "-f", help="Dateianhang (lokal)"),
-    token: Optional[str] = typer.Option(None, "--token", help="Token (überschreibt alles)"),
+    file: Path | None = typer.Option(None, "--file", "-f", help="Dateianhang (lokal)"),
+    token: str | None = typer.Option(None, "--token", help="Token (überschreibt alles)"),
 ) -> None:
     """Direkt-Nachricht an eine Person per E-Mail senden."""
     auth_token = _get_token(token)
@@ -432,17 +457,17 @@ class CardColor(str, Enum):
 
 @app.command()
 def card(
-    room: Optional[str] = typer.Argument(None, help="Raumname (Teilstring) oder Room-ID"),
+    room: str | None = typer.Argument(None, help="Raumname (Teilstring) oder Room-ID"),
     title: str = typer.Option(..., "--title", "-t", help="Titel der Karte"),
-    subtitle: Optional[str] = typer.Option(None, "--subtitle", help="Untertitel"),
+    subtitle: str | None = typer.Option(None, "--subtitle", help="Untertitel"),
     text: str = typer.Option(..., "--text", "-m", help="Nachrichtentext"),
     color: CardColor = typer.Option(CardColor.default, "--color", "-c", help="Farbe des Titels"),
     separator: bool = typer.Option(False, "--separator/--no-separator", help="Trennlinie vor Text"),
-    urls: Optional[list[str]] = typer.Option(None, "--url", "-u", help="Button-URL (wiederholbar)"),
-    url_labels: Optional[list[str]] = typer.Option(None, "--url-label", help="Button-Label (wiederholbar)"),  # noqa: E501
-    images: Optional[list[str]] = typer.Option(None, "--image", help="Bild-URL (wiederholbar)"),
-    facts: Optional[list[str]] = typer.Option(None, "--fact", help="Key=Value (wiederholbar)"),
-    token: Optional[str] = typer.Option(None, "--token", help="Token (überschreibt alles)"),
+    urls: list[str] | None = typer.Option(None, "--url", "-u", help="Button-URL (wiederholbar)"),
+    url_labels: list[str] | None = typer.Option(None, "--url-label", help="Button-Label (wiederholbar)"),  # noqa: E501
+    images: list[str] | None = typer.Option(None, "--image", help="Bild-URL (wiederholbar)"),
+    facts: list[str] | None = typer.Option(None, "--fact", help="Key=Value (wiederholbar)"),
+    token: str | None = typer.Option(None, "--token", help="Token (überschreibt alles)"),
 ) -> None:
     """Adaptive Card mit Titel, Text, optionalen Facts, Bildern und Buttons senden."""
     auth_token = _get_token(token)
@@ -476,6 +501,10 @@ def card(
             if "=" in fact:
                 key, _, value = fact.partition("=")
                 parsed.append({"title": key.strip(), "value": value.strip()})
+            else:
+                typer.echo(
+                    f"Warnung: Fact '{fact}' enthält kein '=' und wird ignoriert.", err=True
+                )
         if parsed:
             body.append({"type": "FactSet", "facts": parsed})
 
@@ -512,9 +541,9 @@ def card(
 
 @app.command(name="read")
 def read_messages(
-    room: Optional[str] = typer.Argument(None, help="Raumname (Teilstring) oder Room-ID"),
+    room: str | None = typer.Argument(None, help="Raumname (Teilstring) oder Room-ID"),
     count: int = typer.Option(10, "--count", "-n", help="Anzahl Nachrichten"),
-    token: Optional[str] = typer.Option(None, "--token", help="Webex-Token (überschreibt alles)"),
+    token: str | None = typer.Option(None, "--token", help="Webex-Token (überschreibt alles)"),
 ) -> None:
     """Letzte Nachrichten aus einem Raum anzeigen."""
     auth_token = _get_token(token)
@@ -553,21 +582,31 @@ def read_messages(
 
 @app.command(name="rooms-update")
 def rooms_update(
-    token: Optional[str] = typer.Option(None, "--token", help="Webex-Token (überschreibt alles)"),
+    token: str | None = typer.Option(None, "--token", help="Webex-Token (überschreibt alles)"),
 ) -> None:
     """roomlist.json live von der Webex-API aktualisieren."""
     auth_token = _get_token(token)
 
     all_rooms: list[dict] = []
-    url: Optional[str] = f"{WEBEX_API}/rooms?max=1000"
+    next_url: str | None = None
+    first_request = True
 
-    while url:
+    while first_request or next_url:
         try:
-            response = httpx.get(
-                url,
-                headers={"Authorization": f"Bearer {auth_token}"},
-                timeout=15,
-            )
+            if first_request:
+                response = httpx.get(
+                    f"{WEBEX_API}/rooms",
+                    params={"max": 1000},
+                    headers={"Authorization": f"Bearer {auth_token}"},
+                    timeout=15,
+                )
+                first_request = False
+            else:
+                response = httpx.get(
+                    next_url,  # type: ignore[arg-type]
+                    headers={"Authorization": f"Bearer {auth_token}"},
+                    timeout=15,
+                )
             response.raise_for_status()
         except httpx.HTTPStatusError as e:
             typer.echo(f"Fehler {e.response.status_code}: {e.response.text}", err=True)
@@ -581,11 +620,11 @@ def rooms_update(
 
         # Paginierung via Link-Header
         link_header = response.headers.get("Link", "")
-        url = None
+        next_url = None
         for part in link_header.split(","):
             part = part.strip()
             if 'rel="next"' in part:
-                url = part.split(";")[0].strip().strip("<>")
+                next_url = part.split(";")[0].strip().strip("<>")
                 break
 
     ROOMLIST_PATH.write_text(json.dumps({"items": all_rooms}, indent=4))
@@ -618,7 +657,7 @@ def _notify_room(auth_token: str, room_id: str, data: dict) -> tuple[dict, int]:
         card_content["actions"] = [{"type": "Action.OpenUrl", "title": url_label, "url": url}]
 
     try:
-        httpx.post(
+        response = httpx.post(
             f"{WEBEX_API}/messages",
             headers={"Authorization": f"Bearer {auth_token}", "Content-Type": "application/json"},
             json={
@@ -632,18 +671,19 @@ def _notify_room(auth_token: str, room_id: str, data: dict) -> tuple[dict, int]:
                 ],
             },
             timeout=10,
-        ).raise_for_status()
+        )
+        response.raise_for_status()
     except (httpx.HTTPStatusError, httpx.RequestError) as e:
         return {"error": str(e)}, 500
-    return {"ok": True}, 200
+    return {"ok": True, "id": response.json().get("id")}, 200
 
 
 @app.command(name="serve")
 def serve(
-    room: Optional[str] = typer.Argument(None, help="Standard-Raum (Teilstring) oder Room-ID)"),
+    room: str | None = typer.Argument(None, help="Standard-Raum (Teilstring) oder Room-ID)"),
     port: int = typer.Option(9000, "--port", "-p", help="Port des Webhook-Servers"),
     host: str = typer.Option("0.0.0.0", "--host", help="Bind-Adresse"),
-    token: Optional[str] = typer.Option(None, "--token", help="Webex-Token (überschreibt alles)"),
+    token: str | None = typer.Option(None, "--token", help="Webex-Token (überschreibt alles)"),
 ) -> None:
     """Webhook-Bridge für mehrere Räume starten.
 
@@ -665,12 +705,13 @@ def serve(
     def notify_room(room_name: str) -> Response:
         try:
             rid = _resolve_room(room_name)
-        except SystemExit:
-            return Response(
-                json.dumps({"error": f"Raum '{room_name}' nicht gefunden"}),
-                status=404,
-                mimetype="application/json",
+        except RoomNotFoundError:
+            # Unknown name — pass through as raw room ID with a warning
+            typer.echo(
+                f"Warnung: '{room_name}' nicht in roomlist.json, verwende als Room-ID direkt.",
+                err=True,
             )
+            rid = room_name
         data = flask_request.get_json(silent=True) or {}
         result, status = _notify_room(auth_token, rid, data)
         return Response(json.dumps(result), status=status, mimetype="application/json")
@@ -683,7 +724,10 @@ def serve(
                 status=400,
                 mimetype="application/json",
             )
-        rid = _resolve_room(default_room_id)
+        try:
+            rid = _resolve_room(default_room_id)
+        except RoomNotFoundError:
+            rid = default_room_id
         data = flask_request.get_json(silent=True) or {}
         result, status = _notify_room(auth_token, rid, data)
         return Response(json.dumps(result), status=status, mimetype="application/json")
@@ -696,7 +740,15 @@ def serve(
     typer.echo("  POST /notify/<raum>  — beliebiger Raum")
     if default_room_id:
         typer.echo(f"  POST /notify         — Standard: {default_room_id}")
-    flask_app.run(host=host, port=port)
+    try:
+        from waitress import serve as waitress_serve
+
+        waitress_serve(flask_app, host=host, port=port)
+    except ImportError:
+        typer.echo(
+            "Warnung: waitress nicht installiert, verwende Flask-Entwicklungsserver.", err=True
+        )
+        flask_app.run(host=host, port=port)
 
 
 @app.command(name="apprise-url")
@@ -764,7 +816,7 @@ def setup() -> None:
 
 @app.command(name="list")
 def list_rooms(
-    search: Optional[str] = typer.Option(None, "--search", "-s", help="Nach Raumname filtern"),
+    search: str | None = typer.Option(None, "--search", "-s", help="Nach Raumname filtern"),
 ) -> None:
     """Verfügbare Räume aus roomlist.json anzeigen."""
     rooms = _load_rooms()
